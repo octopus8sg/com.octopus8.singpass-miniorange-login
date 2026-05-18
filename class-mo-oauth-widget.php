@@ -228,18 +228,18 @@ function mooauth_update_email_to_username_attr($currentappname)
     update_option('mo_oauth_apps_list', $appslist);
 }
 
-function pkce()
-{
-  $verifier = rtrim(strtr(base64_encode(random_bytes(64)), '+/', '-_'), '=');
-  $hashed = hash('sha256', $verifier, true);
-  $challenge = rtrim(strtr(base64_encode($hashed), '+/', '-_'), '=');
+// function pkce()
+// {
+//   $verifier = rtrim(strtr(base64_encode(random_bytes(64)), '+/', '-_'), '=');
+//   $hashed = hash('sha256', $verifier, true);
+//   $challenge = rtrim(strtr(base64_encode($hashed), '+/', '-_'), '=');
 
-  return ['verifier'=>$verifier,'challenge'=>$challenge];
-}
+//   return ['verifier'=>$verifier,'challenge'=>$challenge];
+// }
 
 function mooauth_login_validate()
 {
-    $pkce = pkce();
+    $pkce = MosingpassCryptoHelper::generatePkcePair();
     $singpassappname = "singpassappname";
     if (class_exists('MosingpassPlugin')) {
         $singpassappname = get_option(MosingpassPlugin::APP_NAME);
@@ -272,6 +272,15 @@ function mooauth_login_validate()
 
             }
 
+            if (class_exists('MosingpassPlugin') && $appname === $singpassappname && $appname == $key) {
+                if (session_id() == '' || !isset($_SESSION))
+                    session_start();
+                $_SESSION['challenge'] = $pkce['challenge'];
+                $_SESSION['verifier'] = $pkce['verifier'];
+                MosingpassPlugin::startSingpassFunction($appname, $app);
+                exit();
+            }
+
             if ($appname == $key && (isset($app['send_state']) !== true || $app['send_state'] | $app['appId'] == 'oauth1' || $app['appId'] == 'twitter')) {
                 if ($app['appId'] == "twitter" || $app['appId'] == 'oauth1') {
                     include "custom-oauth1.php";
@@ -279,22 +288,6 @@ function mooauth_login_validate()
                     MOOAuth_Custom_OAuth1::mo_oauth1_auth_request(sanitize_text_field($_COOKIE['tappname']));
                     exit();
                 }
-                try {
-                    if (class_exists('MosingpassPlugin')) {
-                        if ($appname === $singpassappname) {
-                          if (session_id() == '' || !isset($_SESSION))
-                                session_start();
-                            $_SESSION['challenge'] = $pkce['challenge'];
-                            $_SESSION['verifier'] = $pkce['verifier'];
-                            MosingpassPlugin::writeLog('Saved PKCE in session. Challenge: ' . $pkce['challenge'] . ', Verifier: ' . $pkce['verifier']);
-                            MosingpassPlugin::loadSingPassTest($appname, $app, $pkce['challenge']);
-                            exit();
-                        }
-                    }
-                } catch (Exception $e) {
-
-                }
-
                 $state = base64_encode($appname);
                 $authorizationUrl = $app['authorizeurl'];
 
@@ -412,7 +405,7 @@ function mooauth_login_validate()
         }
 
 
-    } else if (strpos($_SERVER['REQUEST_URI'], '/wp-json/moserver/token') === false && !isset($_SERVER['HTTP_X_REQUESTED_WITH']) && (strpos($_SERVER['REQUEST_URI'], "/oauthcallback") !== false || isset($_REQUEST['code']))) {
+    } else if (strpos($_SERVER['REQUEST_URI'], '/wp-json/moserver/token') === false && strpos($_SERVER['REQUEST_URI'], '/wp-json/singpass/v1/signin_oidc') === false && !isset($_SERVER['HTTP_X_REQUESTED_WITH']) && (strpos($_SERVER['REQUEST_URI'], "/oauthcallback") !== false || isset($_REQUEST['code']))) {
         if (session_id() == '' || !isset($_SESSION))
             session_start();
 
@@ -440,7 +433,12 @@ function mooauth_login_validate()
                 if (isset($_SESSION['appname']) && !empty($_SESSION['appname']))
                     $currentappname = sanitize_text_field($_SESSION['appname']);
                 else if (isset($_REQUEST['state']) && !empty($_REQUEST['state'])) {
-                    $currentappname = sanitize_text_field(base64_decode($_REQUEST['state']));
+                    $state = sanitize_text_field($_REQUEST['state']);
+                    if (class_exists('MosingpassPlugin') && get_transient('singpass_auth_' . $state)) {
+                        $currentappname = $singpassappname;
+                    } else {
+                        $currentappname = sanitize_text_field(base64_decode($state));
+                    }
                 }
 
                 if (empty($currentappname)) {
@@ -504,8 +502,6 @@ function mooauth_login_validate()
                     } else {
                         MOOAuth_Debug::mo_oauth_log('ID Token => ');
                         MOOAuth_Debug::mo_oauth_log($idToken);
-                        $resourceOwner = $mo_oauth_handler->getResourceOwnerFromIdToken($idToken);
-                        MOOAuth_Debug::mo_oauth_log('Resource Owner Response => ' . json_encode($resourceOwner));
                     }
 
                 } else {
@@ -522,66 +518,58 @@ function mooauth_login_validate()
                         $currentapp['send_body'] = false;
 
                     if ($currentappname === $singpassappname) {
-                        try {
-                            if (class_exists('MosingpassPlugin')) {
-                                MosingpassPlugin::writeLog($accessTokenUrl, 'OAuth Flow accessTokenUrl');
-                                $accessToken = $tokenResponse = MosingpassPlugin::getSingPassAuthorizationToken($currentapp, $_SESSION['verifier']);
-                            }
-                        } catch (Exception $e) {
-
-                        }
+                        $resourceOwner = MosingpassPlugin::handleSingpassCallback();
                     } else {
                         $accessToken = $mo_oauth_handler->getAccessToken($accessTokenUrl, 'authorization_code', $currentapp['clientid'], $currentapp['clientsecret'], sanitize_text_field($_GET['code']), $currentapp['redirecturi'], $currentapp['send_headers'], $currentapp['send_body']);
-                    }
-
-                    if (!$accessToken) {
-                        MOOAuth_Debug::mo_oauth_log('Access Token Response => ERROR : Invalid token received.');
-                        exit('Invalid token received.');
-                    }
-
-
-                    if (substr($resourceownerdetailsurl, -1) == "=") {
-                        $resourceownerdetailsurl .= $accessToken;
-                    }
-                    MOOAuth_Debug::mo_oauth_log('Token Response Recieved => ' . $accessToken);
-                    MOOAuth_Debug::mo_oauth_log('Token Response Recieved => ' . $tokenResponse);
-                    MOOAuth_Debug::mo_oauth_log('resourceownerdetailsurl => ' . $resourceownerdetailsurl, 'resourceownerdetailsurl');
-                    if ($currentappname === $singpassappname) {
-                        try {
-                            if (class_exists('MosingpassPlugin')) {
-                                $idToken = isset($tokenResponse["id_token"]) ? $tokenResponse["id_token"] : null;
-                                if (!$idToken) {
-                                    MOOAuth_Debug::mo_oauth_log('Token Response Recieved => ERROR : Invalid token received.');
-                                    exit('Invalid token received.');
-                                } else {
-                                    MOOAuth_Debug::mo_oauth_log('ID Token => ');
-                                    MOOAuth_Debug::mo_oauth_log($idToken);
-                                    $resourceOwner = MosingpassPlugin::getResourceOwnerFromIdToken($idToken);
-                                    MOOAuth_Debug::mo_oauth_log('Resource Owner Response => ' . json_encode($resourceOwner));
-
-                                    if ($resourceOwner) {
-                                        $accessToken = isset($tokenResponse["access_token"]) ? $tokenResponse["access_token"] : null;
-                                        if (!$accessToken) {
-                                            MOOAuth_Debug::mo_oauth_log('Token Response Recieved => ERROR : Invalid token received.');
-                                            exit('Invalid token received.');
-                                        } else {
-                                            MOOAuth_Debug::mo_oauth_log('Access Token => ');
-                                            MOOAuth_Debug::mo_oauth_log($accessToken);
-                                            $userInfo = MosingpassPlugin::getUserInfo($accessToken, $resourceOwner);
-                                            MOOAuth_Debug::mo_oauth_log('User Info Response => ' . json_encode($userInfo));
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (Exception $e) {
-
+                        
+                        if (!$accessToken) {
+                            MOOAuth_Debug::mo_oauth_log('Access Token Response => ERROR : Invalid token received.');
+                            exit('Invalid token received.');
                         }
-                    } else {
+
+                        if (substr($resourceownerdetailsurl, -1) == "=") {
+                            $resourceownerdetailsurl .= $accessToken;
+                        }
+
                         $resourceOwner = $mo_oauth_handler->getResourceOwner($resourceownerdetailsurl, $accessToken);
                     }
 
-                    MOOAuth_Debug::mo_oauth_log('Resource Owner Response => ');
-                    MOOAuth_Debug::mo_oauth_log($resourceOwner);
+                    // MOOAuth_Debug::mo_oauth_log('Token Response Recieved => ' . $accessToken);
+                    // MOOAuth_Debug::mo_oauth_log('Token Response Recieved => ' . $tokenResponse);
+                    // MOOAuth_Debug::mo_oauth_log('resourceownerdetailsurl => ' . $resourceownerdetailsurl, 'resourceownerdetailsurl');
+                    // if ($currentappname === $singpassappname) {
+                    //     try {
+                    //         if (class_exists('MosingpassPlugin')) {
+                    //             $idToken = isset($tokenResponse["id_token"]) ? $tokenResponse["id_token"] : null;
+                    //             if (!$idToken) {
+                    //                 MOOAuth_Debug::mo_oauth_log('Token Response Recieved => ERROR : Invalid token received.');
+                    //                 exit('Invalid token received.');
+                    //             } else {
+                    //                 MOOAuth_Debug::mo_oauth_log('ID Token => ');
+                    //                 MOOAuth_Debug::mo_oauth_log($idToken);
+                    //                 $resourceOwner = MosingpassPlugin::getResourceOwnerFromIdToken($idToken);
+                    //                 MOOAuth_Debug::mo_oauth_log('Resource Owner Response => ' . json_encode($resourceOwner));
+
+                    //                 if ($resourceOwner) {
+                    //                     $accessToken = isset($tokenResponse["access_token"]) ? $tokenResponse["access_token"] : null;
+                    //                     if (!$accessToken) {
+                    //                         MOOAuth_Debug::mo_oauth_log('Token Response Recieved => ERROR : Invalid token received.');
+                    //                         exit('Invalid token received.');
+                    //                     } else {
+                    //                         MOOAuth_Debug::mo_oauth_log('Access Token => ');
+                    //                         MOOAuth_Debug::mo_oauth_log($accessToken);
+                    //                         $userInfo = MosingpassPlugin::getUserInfo($accessToken, $resourceOwner);
+                    //                         MOOAuth_Debug::mo_oauth_log('User Info Response => ' . json_encode($userInfo));
+                    //                     }
+                    //                 }
+                    //             }
+                    //         }
+                    //     } catch (Exception $e) {
+
+                    //     }
+                    // } else {
+                    //     $resourceOwner = $mo_oauth_handler->getResourceOwner($resourceownerdetailsurl, $accessToken);
+                    // }
                 }
 
                 $username = "";
@@ -618,6 +606,9 @@ function mooauth_login_validate()
 
                 }
                 $after_login_url = get_option(MosingpassPlugin::AFTER_LOGIN_URL);
+                if (!$after_login_url && $currentappname === $singpassappname) {
+                    $after_login_url = get_option(MosingpassPlugin::REDIRECT_URI);
+                }
                 if ($user) {
                     $user_id = $user->ID;
                     MosingpassPlugin::writeLog($after_login_url, 'after_login_url');
@@ -631,6 +622,9 @@ function mooauth_login_validate()
                         MosingpassPlugin::writeLog($create_new_user, 'create_new_user');
                         if ($redirect_to) {
                             wp_redirect($redirect_to);
+                            exit;
+                        } else if ($currentappname === $singpassappname && get_option(MosingpassPlugin::REDIRECT_URI)) {
+                            wp_redirect(get_option(MosingpassPlugin::REDIRECT_URI));
                             exit;
                         } else {
                             $redirect_to = home_url();
