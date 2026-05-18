@@ -525,17 +525,24 @@ class MosingpassPlugin
     {
         $code = isset($_GET['code']) ? sanitize_text_field($_GET['code']) : null;
         $state = isset($_GET['state']) ? sanitize_text_field($_GET['state']) : null;
+        $iss = isset($_GET['iss']) ? sanitize_text_field(rawurldecode($_GET['iss'])) : null;
 
-        if (!$code || !$state) {
-            self::writeLog('Missing code or state', 'Singpass Callback');
-            wp_die('Missing code or state');
+        if (!$code || !$state || !$iss) {
+            self::writeLog('Missing code or state or issuer', 'Singpass Callback');
+            wp_die('Missing code or state or issuer');
         }
 
         $data = get_transient('singpass_auth_' . $state);
-
         if (!$data) {
             self::writeLog('Session expired or invalid state', 'Singpass Callback');
             wp_die('Session expired');
+        }
+
+        // Stored issuer from transient
+        $storedIssuer = $data['issuer'] ?? null;
+        if ($storedIssuer == null || $iss !== $storedIssuer) {
+            self::writeLog('Issuer mismatch. Received: ' . $iss . ', Expected: ' . $storedIssuer, 'Singpass Callback');
+            wp_die('Invalid issuer');
         }
 
         $tokenResponse = self::requestSingpassToken(
