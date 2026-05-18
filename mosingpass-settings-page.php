@@ -181,6 +181,16 @@ class MosingpassPluginSettingsPage
                 'writeSingPassOptionsHTML'),
             $settings_page);
 
+        add_settings_field(MosingpassPlugin::SINGPASS_PAR_ENDPOINT,
+            'SingPass PAR Endpoint',
+            array($this, 'textHTML'),
+            $settings_page,
+            $singpass_section,
+            array('theName' => MosingpassPlugin::SINGPASS_PAR_ENDPOINT));
+        register_setting("$slug._settings", MosingpassPlugin::SINGPASS_PAR_ENDPOINT,
+            array('sanitize_callback' => 'sanitize_text_field',
+                'default' => ''));
+
         add_settings_field(MosingpassPlugin::SINGPASS_AUTH_ENDPOINT,
             'SingPass Auth Endpoint',
             array($this, 'textHTML'),
@@ -360,4 +370,3 @@ class MosingpassPluginSettingsPage
 
     }
 }
-

@@ -1,6 +1,7 @@
 <?php
 
 require_once dirname(__FILE__) . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'autoload.php';
+require_once dirname(__FILE__) . DIRECTORY_SEPARATOR . 'includes' . DIRECTORY_SEPARATOR . 'class-mosingpass-crypto-helper.php';
 
 // If this file is called directly, abort.
 
@@ -41,6 +42,7 @@ class MosingpassPlugin
 
     public const WRITE_LOG = "mosp_write_log";
     public const REDIRECT_URI = "mosp_redirect_uri";
+    public const SINGPASS_PAR_ENDPOINT = "mosp_singpass_par_endpoint";
     public const SINGPASS_AUTH_ENDPOINT = "mosp_singpass_auth_endpoint";
     public const SINGPASS_TOKEN_ENDPOINT = "mosp_singpass_token_endpoint";
     public const SINGPASS_USERINFO_ENDPOINT = "mosp_singpass_userinfo_endpoint";
@@ -69,14 +71,16 @@ class MosingpassPlugin
             register_rest_route('singpass/v1', '/jwks', array(
                 'methods' => 'GET',
                 'callback' => array($this, 'singpass_jwks'),
+                'permission_callback' => '__return_true',
             ));
         });
         add_filter("plugin_action_links_$plugin_name", array($this, 'settings_link'));
 
         add_action('rest_api_init', function () {
-            register_rest_route('singpass/v1', '/signin_oidc/', array(
+            register_rest_route('singpass/v1', '/signin_oidc', array(
                 'methods' => 'GET',
                 'callback' => array($this, 'oidc_signin_callback'),
+                'permission_callback' => '__return_true',
             ));
         });
         $show_qr_code = get_option(MosingpassPlugin::SHOW_QR);
@@ -87,16 +91,16 @@ class MosingpassPlugin
     }
 
 
-    private static function getRedirectUri()
+    public static function getRedirectUri()
     {
         $allowed_uris = array_filter(array_map(
             'trim',
-            is_array($raw = get_option(self::REDIRECT_URI)) ? $raw : explode("\n", $raw)
+            is_array($raw = get_option(self::REDIRECT_URI)) ? $raw : explode("\n", (string) $raw)
         ));
 
         $redirect_uri = $allowed_uris[0] ?? '/';
 
-        $from = $_COOKIE['postOAuthRedirectUrl'] ?? null;
+        $from = $_COOKIE['postOAuthRedirectUrl'] ?? ($_SERVER['HTTP_REFERER'] ?? null);
 
         if ($from) {
             foreach ($allowed_uris as $allowed_uri) {
@@ -188,7 +192,7 @@ class MosingpassPlugin
 
     function oidc_signin_callback($params)
     {
-        return $params;
+        return rest_ensure_response(self::handleSingpassCallback());
     }
 
     /**
@@ -280,6 +284,361 @@ class MosingpassPlugin
 
         self::writeLog($authorizationUrl, 'Authorization Request');
         header('Location: ' . $authorizationUrl);
+    }
+
+    // FUNCTIONS THAT I WROTE
+    // Step 1: /par
+    public static function requestSingpassPar($dpopKeyPair, $app, $issuer, $privateJwks, $challenge, $state, $nonce, $redirectUri)
+    {
+        $parUrl = get_option(self::SINGPASS_PAR_ENDPOINT);
+
+        $dpop = MosingpassCryptoHelper::generateDpopJWT(
+            'POST',
+            $parUrl,
+            $dpopKeyPair['public_jwk'],
+            $dpopKeyPair['private_jwk']
+        );
+
+        $scope = $app['scope'] ?? "openid";
+        $clientId = $app['clientid'];
+
+        $clientAssertion = MosingpassCryptoHelper::generateClientAssertion(
+            $clientId,
+            $issuer,
+            $privateJwks
+        );
+
+        $response = wp_remote_post($parUrl, [
+            'headers' => [
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'DPoP' => $dpop,
+            ],
+            'body' => [
+                'response_type' => 'code',
+                'scope' => $scope,
+                'state' => $state,
+                'nonce' => $nonce,
+                'client_id' => $clientId,
+                'redirect_uri' => $redirectUri,
+                'client_assertion_type' => 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                'client_assertion' => $clientAssertion,
+                'code_challenge' => $challenge,
+                'code_challenge_method' => 'S256',
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_die($response->get_error_message());
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        // self::writeLog([
+        //     'function' => 'requestSingpassPar',
+        //     'http_response_code' => wp_remote_retrieve_response_code($response),
+        //     'par_body' => $body,
+        //     'request_uri' => $body['request_uri'] ?? null,
+        //     'request_uri_expires_in' => $body['request_uri_expires_in'] ?? null,
+        // ], 'PAR Response');
+
+        if (!empty($body['error'])) {
+            wp_die(
+                'PAR request failed. Error: ' .
+                ($body['error'] ?? 'unknown_error') .
+                ' | Description: ' .
+                ($body['error_description'] ?? 'No error description returned')
+            );
+        }
+
+        if (empty($body['request_uri'])) {
+            wp_die(
+                'Missing request_uri in PAR response. Response: ' .
+                wp_json_encode($body)
+            );
+        }
+
+        return $body['request_uri'];
+    }
+
+    public static function redirectSingpassAuthorization($clientId, $requestUri)
+    {
+        $authorizationUrl = get_option(self::SINGPASS_AUTH_ENDPOINT);
+
+        $redirectUrl = add_query_arg([
+            'client_id' => $clientId,
+            'request_uri' => $requestUri,
+        ], $authorizationUrl);
+
+        // self::writeLog([
+        //     'function' => 'redirectSingpassAuthorization',
+        //     'authorization_url' => $authorizationUrl,
+        //     'client_id' => $clientId,
+        //     'request_uri' => $requestUri,
+        //     'redirect_url' => $redirectUrl,
+        // ], 'Auth Redirect');
+
+        wp_redirect($redirectUrl);
+        exit;
+    }
+
+    public static function requestSingpassToken($dpopKeyPair, $code, $clientId, $issuer, $privateJwks, $codeVerifier, $redirectUri)
+    {
+        $tokenUrl = get_option(self::SINGPASS_TOKEN_ENDPOINT);
+
+        $dpop = MosingpassCryptoHelper::generateDpopJWT(
+            'POST',
+            $tokenUrl,
+            $dpopKeyPair['public_jwk'],
+            $dpopKeyPair['private_jwk']
+        );
+
+        $clientAssertion = MosingpassCryptoHelper::generateClientAssertion(
+            $clientId,
+            $issuer,
+            $privateJwks
+        );
+
+        $response = wp_remote_post($tokenUrl, [
+            'headers' => [
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'DPoP' => $dpop,
+            ],
+            'body' => [
+                'redirect_uri' => $redirectUri,
+                'grant_type' => 'authorization_code',
+                'code' => $code,
+                'client_assertion_type' => 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                'client_assertion' => $clientAssertion,
+                'code_verifier' => $codeVerifier,
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_die($response->get_error_message());
+        }
+
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+
+        // self::writeLog([
+        //     'function' => 'requestSingpassToken',
+        //     'token_endpoint' => $tokenUrl,
+        //     'http_response_code' => wp_remote_retrieve_response_code($response),
+        //     'token_response' => $data,
+        // ], 'Token Response');
+
+        if (!empty($data['error'])) {
+            wp_die('Error occurred while fetching token: ' . $data['error']);
+        }
+
+        return [
+            'id_token'     => $data['id_token'] ?? null,
+            'access_token' => $data['access_token'] ?? null,
+        ];
+    }
+
+    public static function requestSingpassUserInfo($dpopKeyPair, $accessToken)
+    {
+        $url = get_option(self::SINGPASS_USERINFO_ENDPOINT);
+
+        $dpop = MosingpassCryptoHelper::generateDpopJWT(
+            'GET',
+            $url,
+            $dpopKeyPair['public_jwk'],
+            $dpopKeyPair['private_jwk'],
+            $accessToken
+        );
+
+        $response = wp_remote_get($url, [
+            'headers' => [
+                'Authorization' => 'DPoP ' . $accessToken,
+                'DPoP' => $dpop,
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_die($response->get_error_message());
+        }
+
+        $data = wp_remote_retrieve_body($response);
+
+        // self::writeLog([
+        //     'function' => 'requestSingpassUserInfo',
+        //     'userinfo_endpoint' => $url,
+        //     'http_response_code' => wp_remote_retrieve_response_code($response),
+        //     'userinfo_raw_length' => strlen($data),
+        //     'userinfo_raw' => $data,
+        // ], 'UserInfo Raw');
+
+        return $data;
+    }
+
+    public static function startSingpassFunction($appname, $app): void
+    {
+        $dpopKeyPair = MosingpassCryptoHelper::generateDpopKeyPair();
+        $pkcePair    = MosingpassCryptoHelper::generatePkcePair();
+        $state       = MosingpassCryptoHelper::generateRandomId();
+        $nonce       = MosingpassCryptoHelper::generateRandomId();
+        
+        $config = self::getSingPassOpenIdConfig();
+        $issuer = $config['issuer'] ?? null;
+        $singpassPublicJwks = self::fetchJWKSWithCache();
+        
+        if (!$issuer) {
+            wp_die('Missing issuer in OpenID configuration');
+        }
+
+        if (empty($singpassPublicJwks)) {
+            wp_die('Unable to fetch Singpass public JWKS.');
+        }
+
+        $redirectUri = self::getRedirectUri();
+
+        // store EVERYTHING needed later
+        set_transient("singpass_auth_" . $state, [
+            'dpop_keypair' => $dpopKeyPair,
+            'verifier'     => $pkcePair['verifier'],
+            'nonce'        => $nonce,
+            'client_id'    => $app['clientid'],
+            'issuer'       => $issuer,
+            'private_jwks' => get_option(self::PRIVATE_JWKS),
+            'public_jwks'  => get_option(self::PUBLIC_JWKS),
+            'redirect_uri' => $redirectUri,
+            'singpass_jwks' => $singpassPublicJwks,
+        ], 300);
+
+        $requestUri = self::requestSingpassPar(
+            $dpopKeyPair,
+            $app,
+            $issuer,
+            get_option(self::PRIVATE_JWKS),
+            $pkcePair['challenge'],
+            $state,
+            $nonce,
+            $redirectUri
+        );
+
+        self::redirectSingpassAuthorization($app['clientid'], $requestUri);
+        exit;
+    }
+
+    public static function handleSingpassCallback()
+    {
+        $code = isset($_GET['code']) ? sanitize_text_field($_GET['code']) : null;
+        $state = isset($_GET['state']) ? sanitize_text_field($_GET['state']) : null;
+
+        if (!$code || !$state) {
+            self::writeLog('Missing code or state', 'Singpass Callback');
+            wp_die('Missing code or state');
+        }
+
+        $data = get_transient('singpass_auth_' . $state);
+
+        if (!$data) {
+            self::writeLog('Session expired or invalid state', 'Singpass Callback');
+            wp_die('Session expired');
+        }
+
+        $tokenResponse = self::requestSingpassToken(
+            $data['dpop_keypair'],
+            $code,
+            $data['client_id'],
+            $data['issuer'],
+            $data['private_jwks'],
+            $data['verifier'],
+            $data['redirect_uri']
+        );
+
+        // self::writeLog([
+        //     'function' => 'handleSingpassCallback',
+        //     'tokenResponse' => $tokenResponse,
+        // ], 'Token Response (Callback)');
+
+        if (empty($tokenResponse['id_token']) || empty($tokenResponse['access_token'])) {
+            // self::writeLog($tokenResponse, 'Invalid Token Response');
+            wp_die('Invalid token response received.');
+        }
+
+        try {
+            $validatedIdToken = MosingpassCryptoHelper::verifyIdToken(
+                $tokenResponse['id_token'],
+                $data['private_jwks'],
+                $data['singpass_jwks'],
+                $data['issuer'],
+                $data['client_id'],
+                $data['nonce']
+            );
+        } catch (Exception $e) {
+            self::writeLog($e->getMessage(), 'ID Token Validation');
+            wp_die('Invalid ID token received.');
+        }
+
+        $userInfoToken = self::requestSingpassUserInfo(
+            $data['dpop_keypair'],
+            $tokenResponse['access_token']
+        );
+
+        try {
+            $userInfo = MosingpassCryptoHelper::decryptUserInfo(
+                $userInfoToken,
+                $data['private_jwks'],
+                $data['singpass_jwks'],
+                $data['issuer'],
+                $data['client_id']
+            );
+
+        } catch (Exception $e) {
+            self::writeLog($e->getMessage(), 'UserInfo Decryption');
+            wp_die('Invalid UserInfo response received.');
+        }
+
+        if (isset($validatedIdToken['sub'], $userInfo['sub']) && $validatedIdToken['sub'] !== $userInfo['sub']) {
+            self::writeLog('UserInfo subject mismatch', 'Singpass Callback');
+            wp_die('Invalid UserInfo response received.');
+        }
+
+        if (function_exists('set_userinfo_data') && isset($userInfo['person_info'])) {
+            set_userinfo_data(wp_json_encode($userInfo['person_info']));
+
+            $redirectUri = $data['redirect_uri'];
+            $redirectUrl = add_query_arg([
+                'singpass' => 'true',
+                'PHPSESSID' => session_id(),
+            ], $redirectUri);
+
+            delete_transient('singpass_auth_' . $state);
+            wp_redirect($redirectUrl);
+            exit;
+        }
+
+        $logUserInfo = $userInfo;
+        if (isset($logUserInfo['nric'])) { $logUserInfo['nric'] = 'REDACTED'; }
+        // self::writeLog([
+        //     'function' => 'handleSingpassCallback',
+        //     'validatedIdToken' => $validatedIdToken,
+        //     'userInfo' => $logUserInfo,
+        // ], 'Validated UserInfo');
+
+        delete_transient('singpass_auth_' . $state);
+
+        return $userInfo;
+    }
+    
+    public static function getSingPassOpenIdConfig(): array
+    {
+        $openidConfigUrl = get_option(self::SINGPASS_OPENID_ENDPOINT);
+        $response = wp_remote_get($openidConfigUrl);
+
+        if (is_wp_error($response)) {
+            wp_die($response->get_error_message());
+        }
+
+        $config = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (!$config) {
+            wp_die("Invalid OpenID configuration");
+        }
+
+        return $config;
     }
 
     public static function isJWE($token)
