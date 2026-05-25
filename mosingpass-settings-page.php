@@ -10,7 +10,7 @@ class MosingpassPluginSettingsPage
 
     public function __construct()
     {
-
+        add_action('admin_post_mosingpass_clear_cache', array($this, 'clearCache'));
     }
 
     public function createSettings()
@@ -44,6 +44,34 @@ class MosingpassPluginSettingsPage
                 class="form-control" rows="8" cols="75"
                 name="<?php echo $args['theName'] ?>"><?php echo get_option($args['theName']) ?></textarea>
     <?php }
+
+    function clearCacheButtonHTML()
+    { ?>
+        <button type="submit" class="button" form="mosingpass-clear-cache-form">
+            Clear Cache
+        </button>
+    <?php }
+
+    function clearCache()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die('You do not have permission to clear the cache.');
+        }
+
+        check_admin_referer('mosingpass_clear_cache');
+
+        $deleted = delete_transient('mosingpass_jwks_cache');
+        $redirect_url = add_query_arg(
+            array(
+                'page' => self::SETTINGS_PAGE,
+                'mosingpass_cache_cleared' => $deleted ? '1' : '0',
+            ),
+            admin_url('options-general.php')
+        );
+
+        wp_safe_redirect($redirect_url);
+        exit;
+    }
 
     function writeCommonOptionsHTML()
     { ?>
@@ -83,6 +111,18 @@ class MosingpassPluginSettingsPage
     {
 //        self::writeLog("Hello!", "settingsHTML");
         $slug = self::SLUG;
+        if (isset($_GET['mosingpass_cache_cleared'])) {
+            $cache_cleared = sanitize_text_field(wp_unslash($_GET['mosingpass_cache_cleared']));
+            $notice_class = $cache_cleared === '1' ? 'notice-success' : 'notice-info';
+            $notice_message = $cache_cleared === '1'
+                ? 'SingPass JWKS cache cleared.'
+                : 'SingPass JWKS cache was already empty.';
+            ?>
+            <div class="notice <?php echo esc_attr($notice_class); ?> is-dismissible">
+                <p><?php echo esc_html($notice_message); ?></p>
+            </div>
+            <?php
+        }
         ?>
         <div class="block">
             <h1>MO Singpass Settings</h1>
@@ -92,6 +132,10 @@ class MosingpassPluginSettingsPage
                 do_settings_sections(self::SETTINGS_PAGE);
                 submit_button();
                 ?>
+            </form>
+            <form id="mosingpass-clear-cache-form" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="POST">
+                <input type="hidden" name="action" value="mosingpass_clear_cache">
+                <?php wp_nonce_field('mosingpass_clear_cache'); ?>
             </form>
         </div>
         <?php
@@ -163,7 +207,12 @@ class MosingpassPluginSettingsPage
             MosingpassPlugin::WRITE_LOG,
             array('sanitize_callback' => 'sanitize_text_field',
                 'default' => '0'));
-
+        
+        add_settings_field(MosingpassPlugin::CLEAR_CACHE,
+            'Clear Cache',
+            array($this, 'clearCacheButtonHTML'),
+            $settings_page,
+            $common_section);
     }
 
     /**
