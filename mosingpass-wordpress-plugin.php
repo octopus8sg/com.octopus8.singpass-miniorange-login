@@ -55,6 +55,7 @@ class MosingpassPlugin
     public const AFTER_LOGIN_URL = "mosp_after_login_url";
     public const PUBLIC_JWKS = "mosp_public_jwks";
     public const PRIVATE_JWKS = "mosp_private_jwks";
+    public const CLEAR_CACHE = "mosp_clear_cache";
     public const PRIVATE_SIG_KEY = "mosp_private_sig_key";
     public const PRIVATE_ENC_KEY = "mosp_private_enc_key";
     public $plugin_name;
