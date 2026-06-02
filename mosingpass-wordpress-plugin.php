@@ -604,7 +604,7 @@ class MosingpassPlugin
             wp_die('Invalid UserInfo response received.');
         }
 
-        if (function_exists('set_userinfo_data') && isset($userInfo['person_info'])) {
+        if (function_exists('set_userinfo_data') && isset($userInfo['person_info']) && empty($_COOKIE['mo_oauth_test'])) {
             set_userinfo_data(wp_json_encode($userInfo['person_info']));
 
             $redirectUri = $data['redirect_uri'];
