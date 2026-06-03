@@ -611,28 +611,6 @@ class MosingpassPlugin
                 'sub_type' => $validatedIdToken['sub_type'] ?? '',
                 'acr' => $validatedIdToken['acr'] ?? '',
             );
-
-            if (empty($_COOKIE['mo_oauth_test'])) {
-                $user = get_user_by('login', $nric);
-
-                if ($user) {
-                    wp_set_current_user($user->ID);
-                    wp_set_auth_cookie($user->ID);
-                    do_action('wp_login', $user->user_login, $user);
-
-                    $redirectUri = get_option(self::AFTER_LOGIN_URL);
-                    if (!$redirectUri) {
-                        $redirectUri = home_url();
-                    }
-
-                    delete_transient('singpass_auth_' . $state);
-                    wp_redirect($redirectUri);
-                    exit;
-                }
-
-                delete_transient('singpass_auth_' . $state);
-                wp_die('No user account associated with this Singpass account. Please contact the administrator.');
-            }
         } else {
             // For MyInfo mode
             $userInfoToken = self::requestSingpassUserInfo(
