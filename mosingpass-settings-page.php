@@ -45,6 +45,125 @@ class MosingpassPluginSettingsPage
                 name="<?php echo $args['theName'] ?>"><?php echo get_option($args['theName']) ?></textarea>
     <?php }
 
+    function singpassAppModeHTML($args)
+    {
+        $current = get_option($args['theName'], 'myinfo');
+        ?>
+        <fieldset>
+            <label>
+                <input type="radio"
+                       name="<?php echo esc_attr($args['theName']); ?>"
+                       value="myinfo"
+                    <?php checked($current, 'myinfo'); ?>>
+                MyInfo Retrieval
+            </label>
+            <br>
+            <label>
+                <input type="radio"
+                       name="<?php echo esc_attr($args['theName']); ?>"
+                       value="login"
+                    <?php checked($current, 'login'); ?>>
+                SingPass Login
+            </label>
+        </fieldset>
+    <?php }
+
+    function authenticationContextTypeHTML($args)
+    {
+        $current = get_option($args['theName'], 'APP_AUTHENTICATION_DEFAULT');
+        $context_options = array(
+            'Others' => array(
+                'APP_AUTHENTICATION_DEFAULT' => 'General authentication',
+                'APP_PAYMENT_DEFAULT' => 'Making a payment',
+                'APP_ACCOUNT_PASSWORD_CHANGE_DEFAULT' => 'Password change',
+                'APP_ACCOUNT_PASSWORD_RESET_DEFAULT' => 'Password reset',
+                'APP_ACCOUNT_DETAILS_CHANGE_DEFAULT' => 'Account details change',
+                'APP_ONBOARDING_DEFAULT' => 'App onboarding',
+            ),
+            'CPF transactions' => array(
+                'CPF_CHANGE_PAYMENT_MODE' => 'Change payment mode',
+                'CPF_CHANGE_DAILY_WITHDRAWAL_LIMIT' => 'Change daily withdrawal limits',
+                'CPF_PROFILE_UPDATE' => 'Profile update',
+                'CPF_LINK_BANK_ACCOUNT' => 'Link to bank account',
+                'CPF_FUNDS_TRANSFER' => 'Funds transfer',
+            ),
+            'Banking' => array(
+                'BANK_CASA_OPENING' => 'CASA opening',
+                'BANK_CASA_INITIAL_USAGE' => 'CASA initial usage',
+                'BANK_CARD_APPLICATION' => 'Debit/Credit card application',
+                'BANK_CARD_INITIAL_USAGE' => 'Debit/Credit card initial usage',
+                'BANK_LOAN_APPLICATION' => 'Loan application',
+                'BANK_ADD_LOCAL_RECIPIENT' => 'Successful addition of local recipient',
+                'BANK_ADD_OVERSEAS_RECIPIENT' => 'Successful addition of overseas recipient',
+                'BANK_INCREASE_TRANSFER_LIMIT' => 'Increase transfer limit',
+                'BANK_REPORT_FRAUD_SUSPICIOUS_ACTIVITY' => 'Report fraud or suspicious activity',
+                'BANK_FUNDS_TRANSFER_LOCAL' => 'Funds transfer',
+                'BANK_REMIT_MONEY_OVERSEAS' => 'Remit money overseas',
+                'BANK_REPORT_LOST_CARD' => 'Report lost cards',
+                'BANK_CHANGE_NOTIFICATION_METHOD' => 'Change of notification method',
+                'BANK_INCREASE_CREDIT_CARD_LIMIT' => 'Increase credit card limit',
+                'BANK_REQUEST_CASH_ADVANCE' => 'Cash advance',
+                'BANK_INCREASE_INFLOW_OUTFLOW' => 'Increased inflow and outflow of funds transfer',
+                'BANK_ACTIVATE_DORMANT_ACCOUNT' => 'Activation of a dormant account',
+                'BANK_LOGIN_NEW_DEVICE' => 'Login using a new device',
+                'BANK_LOGIN_UNFAMILIAR_IP' => 'Login from an unfamiliar IP',
+                'BANK_UPDATE_USER_INFORMATION' => 'User information update',
+                'BANK_NEW_DEVICE_REGISTRATION' => 'New device registration',
+                'BANK_UNLOCK_MONEY_LOCK' => 'Unlock money lock',
+                'BANK_GOOGLE_PAY_APPLE_PAY_CARD_ONBOARDING' => 'Google Pay / Apple Pay card onboarding',
+            ),
+            'Other Financial Institutions' => array(
+                'FI_ACCOUNT_OPENING' => 'Account opening',
+                'FI_LINK_BANK_ACCOUNT' => 'Link bank account',
+                'FI_INCREASE_TRANSFER_LIMIT' => 'Increase transfer limit',
+                'FI_INCREASE_WITHDRAWAL_LIMIT' => 'Increase withdrawal limit',
+                'FI_INITIATE_DEPOSIT' => 'Initiate deposit',
+            ),
+            'Telcos' => array(
+                'TELCO_SIM_CARD_APPLICATION' => 'SIM card application',
+                'TELCO_SIM_CARD_ACTIVATION' => 'Activation of SIM card',
+                'TELCO_CHANGE_ACCOUNT_DETAILS' => 'Change of account details',
+                'TELCO_ACTIVATE_ROAMING' => 'Activate roaming',
+                'TELCO_CHANGE_NOTIFICATION_METHOD' => 'Change of notification method',
+            ),
+        );
+        ?>
+        <select class="form-control" name="<?php echo esc_attr($args['theName']); ?>">
+            <?php foreach ($context_options as $group_label => $options): ?>
+                <optgroup label="<?php echo esc_attr($group_label); ?>">
+                    <?php foreach ($options as $value => $label): ?>
+                        <option value="<?php echo esc_attr($value); ?>" <?php selected($current, $value); ?>>
+                            <?php echo esc_html($label . ' (' . $value . ')'); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </optgroup>
+            <?php endforeach; ?>
+        </select>
+        <p class="description">
+            Sent only when SingPass Login is selected.
+        </p>
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                const modeInputs = document.querySelectorAll('input[name="<?php echo esc_js(MosingpassPlugin::SINGPASS_APP_MODE); ?>"]');
+                const authContextSelect = document.querySelector('select[name="<?php echo esc_js($args['theName']); ?>"]');
+                const authContextRow = authContextSelect ? authContextSelect.closest('tr') : null;
+
+                function toggleAuthenticationContext() {
+                    const selectedMode = document.querySelector('input[name="<?php echo esc_js(MosingpassPlugin::SINGPASS_APP_MODE); ?>"]:checked');
+                    if (authContextRow) {
+                        authContextRow.style.display = selectedMode && selectedMode.value === 'login' ? '' : 'none';
+                    }
+                }
+
+                modeInputs.forEach(function (input) {
+                    input.addEventListener('change', toggleAuthenticationContext);
+                });
+
+                toggleAuthenticationContext();
+            });
+        </script>
+    <?php }
+
     function clearCacheButtonHTML()
     { ?>
         <button type="submit" class="button" form="mosingpass-clear-cache-form">
@@ -289,6 +408,30 @@ class MosingpassPluginSettingsPage
         register_setting("$slug._settings", MosingpassPlugin::SINGPASS_OPENID_ENDPOINT,
             array('sanitize_callback' => 'sanitize_text_field',
                 'default' => ''));
+
+        add_settings_field(MosingpassPlugin::SINGPASS_APP_MODE,
+            'SingPass Mode',
+            array($this, 'singpassAppModeHTML'),
+            $settings_page,
+            $singpass_section,
+            array('theName' => MosingpassPlugin::SINGPASS_APP_MODE));
+        register_setting("$slug._settings", MosingpassPlugin::SINGPASS_APP_MODE,
+            array(
+                'sanitize_callback' => function ($value) {
+                    return in_array($value, array('myinfo', 'login'), true) ? $value : 'myinfo';
+                },
+                'default' => 'myinfo'
+            ));
+
+        add_settings_field(MosingpassPlugin::SINGPASS_AUTH_CONTEXT_TYPE,
+            'Authentication Context Type',
+            array($this, 'authenticationContextTypeHTML'),
+            $settings_page,
+            $singpass_section,
+            array('theName' => MosingpassPlugin::SINGPASS_AUTH_CONTEXT_TYPE));
+        register_setting("$slug._settings", MosingpassPlugin::SINGPASS_AUTH_CONTEXT_TYPE,
+            array('sanitize_callback' => 'sanitize_text_field',
+                'default' => 'APP_AUTHENTICATION_DEFAULT'));
 
     }
 
