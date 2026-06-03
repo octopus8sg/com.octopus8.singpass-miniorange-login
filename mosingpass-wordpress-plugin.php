@@ -48,6 +48,8 @@ class MosingpassPlugin
     public const SINGPASS_USERINFO_ENDPOINT = "mosp_singpass_userinfo_endpoint";
     public const SINGPASS_OPENID_ENDPOINT = "mosp_singpass_openid_endpoint";
     public const SINGPASS_JWKS_ENDPOINT = "mosp_singpass_jwk_endpoint";
+    public const SINGPASS_APP_MODE = "mosp_singpass_app_mode";
+    public const SINGPASS_AUTH_CONTEXT_TYPE = "mosp_singpass_auth_context_type";
     public const APP_NAME = "mosp_app_name";
     public const SHOW_QR = "mosp_show_qr";
     public const CREATE_NEW_USER = "mosp_create_new_user";
@@ -309,23 +311,32 @@ class MosingpassPlugin
             $privateJwks
         );
 
+        $requestBody = [
+            'response_type' => 'code',
+            'scope' => $scope,
+            'state' => $state,
+            'nonce' => $nonce,
+            'client_id' => $clientId,
+            'redirect_uri' => $redirectUri,
+            'client_assertion_type' => 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            'client_assertion' => $clientAssertion,
+            'code_challenge' => $challenge,
+            'code_challenge_method' => 'S256',
+        ];
+
+        if (get_option(self::SINGPASS_APP_MODE, 'myinfo') === 'login') {
+            $authContextType = get_option(self::SINGPASS_AUTH_CONTEXT_TYPE, 'APP_AUTHENTICATION_DEFAULT');
+            if (!empty($authContextType)) {
+                $requestBody['authentication_context_type'] = $authContextType;
+            }
+        }
+
         $response = wp_remote_post($parUrl, [
-            'headers' => [
+            'headers' => [  
                 'Content-Type' => 'application/x-www-form-urlencoded',
                 'DPoP' => $dpop,
             ],
-            'body' => [
-                'response_type' => 'code',
-                'scope' => $scope,
-                'state' => $state,
-                'nonce' => $nonce,
-                'client_id' => $clientId,
-                'redirect_uri' => $redirectUri,
-                'client_assertion_type' => 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-                'client_assertion' => $clientAssertion,
-                'code_challenge' => $challenge,
-                'code_challenge_method' => 'S256',
-            ],
+            'body' => $requestBody,
         ]);
 
         if (is_wp_error($response)) {
@@ -561,8 +572,13 @@ class MosingpassPlugin
         //     'tokenResponse' => $tokenResponse,
         // ], 'Token Response (Callback)');
 
-        if (empty($tokenResponse['id_token']) || empty($tokenResponse['access_token'])) {
-            // self::writeLog($tokenResponse, 'Invalid Token Response');
+        $isLogin = get_option(self::SINGPASS_APP_MODE, 'myinfo') === 'login';
+
+        if (empty($tokenResponse['id_token'])) {
+            wp_die('Invalid token response received.');
+        }
+
+        if (!$isLogin && empty($tokenResponse['access_token'])) {
             wp_die('Invalid token response received.');
         }
 
@@ -580,51 +596,83 @@ class MosingpassPlugin
             wp_die('Invalid ID token received.');
         }
 
-        $userInfoToken = self::requestSingpassUserInfo(
-            $data['dpop_keypair'],
-            $tokenResponse['access_token']
-        );
+        if ($isLogin) {
+            $nric = $validatedIdToken['sub_attributes']['identity_number'] ?? null;
+            
+            if (empty($nric)) {
+                wp_die('Identity number not found in ID token.');
+            }
 
-        try {
-            $userInfo = MosingpassCryptoHelper::decryptUserInfo(
-                $userInfoToken,
-                $data['private_jwks'],
-                $data['singpass_jwks'],
-                $data['issuer'],
-                $data['client_id']
+            $userInfo = array(
+                'sub' => $validatedIdToken['sub'] ?? '',
+                'identity_number' => $nric,
+                'identity_coi' => $validatedIdToken['sub_attributes']['identity_coi'] ?? '',
+                'account_type' => $validatedIdToken['sub_attributes']['account_type'] ?? '',
+                'sub_type' => $validatedIdToken['sub_type'] ?? '',
+                'acr' => $validatedIdToken['acr'] ?? '',
             );
 
-        } catch (Exception $e) {
-            self::writeLog($e->getMessage(), 'UserInfo Decryption');
-            wp_die('Invalid UserInfo response received.');
+            if (empty($_COOKIE['mo_oauth_test'])) {
+                $user = get_user_by('login', $nric);
+
+                if ($user) {
+                    wp_set_current_user($user->ID);
+                    wp_set_auth_cookie($user->ID);
+                    do_action('wp_login', $user->user_login, $user);
+
+                    $redirectUri = get_option(self::AFTER_LOGIN_URL);
+                    if (!$redirectUri) {
+                        $redirectUri = home_url();
+                    }
+
+                    delete_transient('singpass_auth_' . $state);
+                    wp_redirect($redirectUri);
+                    exit;
+                }
+
+                delete_transient('singpass_auth_' . $state);
+                wp_die('No user account associated with this Singpass account. Please contact the administrator.');
+            }
+        } else {
+            // For MyInfo mode
+            $userInfoToken = self::requestSingpassUserInfo(
+                $data['dpop_keypair'],
+                $tokenResponse['access_token']
+            );
+
+            try {
+                $userInfo = MosingpassCryptoHelper::decryptUserInfo(
+                    $userInfoToken,
+                    $data['private_jwks'],
+                    $data['singpass_jwks'],
+                    $data['issuer'],
+                    $data['client_id']
+                );
+
+            } catch (Exception $e) {
+                self::writeLog($e->getMessage(), 'UserInfo Decryption');
+                wp_die('Invalid UserInfo response received.');
+            }
+
+            if (isset($validatedIdToken['sub'], $userInfo['sub']) && $validatedIdToken['sub'] !== $userInfo['sub']) {
+                self::writeLog('UserInfo subject mismatch', 'Singpass Callback');
+                wp_die('Invalid UserInfo response received.');
+            }
+
+            if (function_exists('set_userinfo_data') && isset($userInfo['person_info']) && empty($_COOKIE['mo_oauth_test'])) {
+                set_userinfo_data(wp_json_encode($userInfo['person_info']));
+
+                $redirectUri = $data['redirect_uri'];
+                $redirectUrl = add_query_arg([
+                    'singpass' => 'true',
+                    'PHPSESSID' => session_id(),
+                ], $redirectUri);
+
+                delete_transient('singpass_auth_' . $state);
+                wp_redirect($redirectUrl);
+                exit;
+            }
         }
-
-        if (isset($validatedIdToken['sub'], $userInfo['sub']) && $validatedIdToken['sub'] !== $userInfo['sub']) {
-            self::writeLog('UserInfo subject mismatch', 'Singpass Callback');
-            wp_die('Invalid UserInfo response received.');
-        }
-
-        if (function_exists('set_userinfo_data') && isset($userInfo['person_info']) && empty($_COOKIE['mo_oauth_test'])) {
-            set_userinfo_data(wp_json_encode($userInfo['person_info']));
-
-            $redirectUri = $data['redirect_uri'];
-            $redirectUrl = add_query_arg([
-                'singpass' => 'true',
-                'PHPSESSID' => session_id(),
-            ], $redirectUri);
-
-            delete_transient('singpass_auth_' . $state);
-            wp_redirect($redirectUrl);
-            exit;
-        }
-
-        $logUserInfo = $userInfo;
-        if (isset($logUserInfo['nric'])) { $logUserInfo['nric'] = 'REDACTED'; }
-        // self::writeLog([
-        //     'function' => 'handleSingpassCallback',
-        //     'validatedIdToken' => $validatedIdToken,
-        //     'userInfo' => $logUserInfo,
-        // ], 'Validated UserInfo');
 
         delete_transient('singpass_auth_' . $state);
 
