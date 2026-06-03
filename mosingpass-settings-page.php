@@ -63,7 +63,7 @@ class MosingpassPluginSettingsPage
                        name="<?php echo esc_attr($args['theName']); ?>"
                        value="login"
                     <?php checked($current, 'login'); ?>>
-                SingPass Login
+                Singpass Login
             </label>
         </fieldset>
     <?php }
@@ -139,19 +139,22 @@ class MosingpassPluginSettingsPage
                 </optgroup>
             <?php endforeach; ?>
         </select>
-        <p class="description">
-            Sent only when SingPass Login is selected.
-        </p>
         <script>
             document.addEventListener('DOMContentLoaded', function () {
                 const modeInputs = document.querySelectorAll('input[name="<?php echo esc_js(MosingpassPlugin::SINGPASS_APP_MODE); ?>"]');
                 const authContextSelect = document.querySelector('select[name="<?php echo esc_js($args['theName']); ?>"]');
                 const authContextRow = authContextSelect ? authContextSelect.closest('tr') : null;
+                const userInfoInput = document.querySelector('input[name="<?php echo esc_js(MosingpassPlugin::SINGPASS_USERINFO_ENDPOINT); ?>"]');
+                const userInfoRow = userInfoInput ? userInfoInput.closest('tr') : null;
 
                 function toggleAuthenticationContext() {
                     const selectedMode = document.querySelector('input[name="<?php echo esc_js(MosingpassPlugin::SINGPASS_APP_MODE); ?>"]:checked');
+                    const isLogin = selectedMode && selectedMode.value === 'login';
                     if (authContextRow) {
-                        authContextRow.style.display = selectedMode && selectedMode.value === 'login' ? '' : 'none';
+                        authContextRow.style.display = isLogin ? '' : 'none';
+                    }
+                    if (userInfoRow) {
+                        userInfoRow.style.display = isLogin ? 'none' : '';
                     }
                 }
 
@@ -349,6 +352,30 @@ class MosingpassPluginSettingsPage
                 'writeSingPassOptionsHTML'),
             $settings_page);
 
+        add_settings_field(MosingpassPlugin::SINGPASS_APP_MODE,
+            'SingPass Mode',
+            array($this, 'singpassAppModeHTML'),
+            $settings_page,
+            $singpass_section,
+            array('theName' => MosingpassPlugin::SINGPASS_APP_MODE));
+        register_setting("$slug._settings", MosingpassPlugin::SINGPASS_APP_MODE,
+            array(
+                'sanitize_callback' => function ($value) {
+                    return in_array($value, array('myinfo', 'login'), true) ? $value : 'myinfo';
+                },
+                'default' => 'myinfo'
+            ));
+
+        add_settings_field(MosingpassPlugin::SINGPASS_AUTH_CONTEXT_TYPE,
+            'Authentication Context Type',
+            array($this, 'authenticationContextTypeHTML'),
+            $settings_page,
+            $singpass_section,
+            array('theName' => MosingpassPlugin::SINGPASS_AUTH_CONTEXT_TYPE));
+        register_setting("$slug._settings", MosingpassPlugin::SINGPASS_AUTH_CONTEXT_TYPE,
+            array('sanitize_callback' => 'sanitize_text_field',
+                'default' => 'APP_AUTHENTICATION_DEFAULT'));
+
         add_settings_field(MosingpassPlugin::SINGPASS_PAR_ENDPOINT,
             'SingPass PAR Endpoint',
             array($this, 'textHTML'),
@@ -408,30 +435,6 @@ class MosingpassPluginSettingsPage
         register_setting("$slug._settings", MosingpassPlugin::SINGPASS_OPENID_ENDPOINT,
             array('sanitize_callback' => 'sanitize_text_field',
                 'default' => ''));
-
-        add_settings_field(MosingpassPlugin::SINGPASS_APP_MODE,
-            'SingPass Mode',
-            array($this, 'singpassAppModeHTML'),
-            $settings_page,
-            $singpass_section,
-            array('theName' => MosingpassPlugin::SINGPASS_APP_MODE));
-        register_setting("$slug._settings", MosingpassPlugin::SINGPASS_APP_MODE,
-            array(
-                'sanitize_callback' => function ($value) {
-                    return in_array($value, array('myinfo', 'login'), true) ? $value : 'myinfo';
-                },
-                'default' => 'myinfo'
-            ));
-
-        add_settings_field(MosingpassPlugin::SINGPASS_AUTH_CONTEXT_TYPE,
-            'Authentication Context Type',
-            array($this, 'authenticationContextTypeHTML'),
-            $settings_page,
-            $singpass_section,
-            array('theName' => MosingpassPlugin::SINGPASS_AUTH_CONTEXT_TYPE));
-        register_setting("$slug._settings", MosingpassPlugin::SINGPASS_AUTH_CONTEXT_TYPE,
-            array('sanitize_callback' => 'sanitize_text_field',
-                'default' => 'APP_AUTHENTICATION_DEFAULT'));
 
     }
 
