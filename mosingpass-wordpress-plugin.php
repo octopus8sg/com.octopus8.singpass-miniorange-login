@@ -195,7 +195,7 @@ class MosingpassPlugin
 
     function oidc_signin_callback($params)
     {
-        return rest_ensure_response(self::handleSingpassCallback());
+        return $params;
     }
 
     /**
