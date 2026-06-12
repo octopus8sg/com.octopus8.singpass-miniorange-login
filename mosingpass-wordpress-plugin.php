@@ -195,7 +195,7 @@ class MosingpassPlugin
 
     function oidc_signin_callback($params)
     {
-        return rest_ensure_response(self::handleSingpassCallback());
+        return $params;
     }
 
     /**
@@ -604,12 +604,8 @@ class MosingpassPlugin
             }
 
             $userInfo = array(
-                'sub' => $validatedIdToken['sub'] ?? '',
-                'identity_number' => $nric,
-                'identity_coi' => $validatedIdToken['sub_attributes']['identity_coi'] ?? '',
-                'account_type' => $validatedIdToken['sub_attributes']['account_type'] ?? '',
-                'sub_type' => $validatedIdToken['sub_type'] ?? '',
-                'acr' => $validatedIdToken['acr'] ?? '',
+                'nric' => $nric,
+                'uen' => $validatedIdToken['sub'] ?? '',
             );
         } else {
             // For MyInfo mode

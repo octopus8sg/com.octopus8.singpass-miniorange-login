@@ -405,7 +405,7 @@ function mooauth_login_validate()
         }
 
 
-    } else if (strpos($_SERVER['REQUEST_URI'], '/wp-json/moserver/token') === false && strpos($_SERVER['REQUEST_URI'], '/wp-json/singpass/v1/signin_oidc') === false && !isset($_SERVER['HTTP_X_REQUESTED_WITH']) && (strpos($_SERVER['REQUEST_URI'], "/oauthcallback") !== false || isset($_REQUEST['code']))) {
+    } else if (strpos($_SERVER['REQUEST_URI'], '/wp-json/moserver/token') === false && !isset($_SERVER['HTTP_X_REQUESTED_WITH']) && (strpos($_SERVER['REQUEST_URI'], "/oauthcallback") !== false || isset($_REQUEST['code']))) {
         if (session_id() == '' || !isset($_SESSION))
             session_start();
 
