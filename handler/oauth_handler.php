@@ -41,11 +41,11 @@ class MOOAuth_Hanlder {
 		}elseif(!$send_headers && $send_body){
 				unset( $headers['Authorization'] );
 		}
-		// MOOAuth_Debug::mo_oauth_log('Token Request Sent => '.$tokenendpoint);	
-		// MOOAuth_Debug::mo_oauth_log('body =>');
-		// MOOAuth_Debug::mo_oauth_log($body);	
-		// MOOAuth_Debug::mo_oauth_log('headers =>');
-		// MOOAuth_Debug::mo_oauth_log($headers);
+		MOOAuth_Debug::mo_oauth_log('Token Request Sent => '.$tokenendpoint);	
+		MOOAuth_Debug::mo_oauth_log('body =>');
+		MOOAuth_Debug::mo_oauth_log($body);	
+		MOOAuth_Debug::mo_oauth_log('headers =>');
+		MOOAuth_Debug::mo_oauth_log($headers);
 
 		$response   = wp_remote_post( $tokenendpoint, array(
 			'method'      => 'POST',
@@ -65,7 +65,7 @@ class MOOAuth_Hanlder {
 			wp_die( esc_html($response) );
 		}
 		$response =  $response['body'] ;
-		// MOOAuth_Debug::mo_oauth_log('Token Response Received => '.$response);
+		MOOAuth_Debug::mo_oauth_log('Token Response Received => '.$response);
 		if(!is_array(json_decode($response, true))){
 			echo "<b>Response : </b><br>";print_r(esc_html($response));echo "<br><br>";
 			MOOAuth_Debug::mo_oauth_log('Invalid response received.');
@@ -108,7 +108,7 @@ class MOOAuth_Hanlder {
 				return json_decode($id_body,true);
 			}
 		}
-		// MOOAuth_Debug::mo_oauth_log('Invalid response received while fetching Id token from the Resource Owner. Id_token : '.esc_html($id_token));
+		MOOAuth_Debug::mo_oauth_log('Invalid response received while fetching Id token from the Resource Owner. Id_token : '.esc_html($id_token));
 		echo 'Invalid response received.<br><b>Id_token : </b>'.esc_html($id_token);
 		exit;
 	}
@@ -118,8 +118,8 @@ class MOOAuth_Hanlder {
 		$headers['Authorization'] = 'Bearer '.$access_token;
 
 		MOOAuth_Debug::mo_oauth_log('Resource Owner request content => ');			
-		// MOOAuth_Debug::mo_oauth_log('headers =>');
-		// MOOAuth_Debug::mo_oauth_log($headers);
+		MOOAuth_Debug::mo_oauth_log('headers =>');
+		MOOAuth_Debug::mo_oauth_log($headers);
 		MOOAuth_Debug::mo_oauth_log('Resource Owner Endpoint: '.$resourceownerdetailsurl);
 
 		$response   = wp_remote_post( $resourceownerdetailsurl, array(
