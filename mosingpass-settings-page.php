@@ -444,24 +444,11 @@ class MosingpassPluginSettingsPage
 
 
 /*
- *     public const SHOW_QR = "mosp_show_qr";
     public const CREATE_NEW_USER = "mosp_create_new_user";
     public const ADD_NEW_USER_FORM = "mosp_add_new_user_form";
     public const AFTER_LOGIN_URL = "mosp_after_login_url";
 
  */
-
-        add_settings_field(MosingpassPlugin::SHOW_QR,
-            'Show QR',
-            array($this, 'checkboxHTML'),
-            $settings_page,
-            $local_section,
-            array('theName' => MosingpassPlugin::SHOW_QR));
-        register_setting("$slug._settings",
-            MosingpassPlugin::SHOW_QR,
-            array('sanitize_callback' => 'sanitize_text_field',
-                'default' => '0'));
-
 
         add_settings_field(MosingpassPlugin::CREATE_NEW_USER,
             "Automatically Create New User",

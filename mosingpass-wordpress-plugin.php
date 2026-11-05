@@ -51,7 +51,6 @@ class MosingpassPlugin
     public const SINGPASS_APP_MODE = "mosp_singpass_app_mode";
     public const SINGPASS_AUTH_CONTEXT_TYPE = "mosp_singpass_auth_context_type";
     public const APP_NAME = "mosp_app_name";
-    public const SHOW_QR = "mosp_show_qr";
     public const CREATE_NEW_USER = "mosp_create_new_user";
     public const ADD_NEW_USER_FORM = "mosp_add_new_user_form";
     public const AFTER_LOGIN_URL = "mosp_after_login_url";
@@ -85,10 +84,10 @@ class MosingpassPlugin
                 'permission_callback' => '__return_true',
             ));
         });
-        $show_qr_code = get_option(MosingpassPlugin::SHOW_QR);
-        if ($show_qr_code) {
-            add_action('login_head', array($this, 'qr_code_scripts'));
-        }
+        // Show QR was removed: clear the setting left on existing sites.
+        add_action('admin_init', function () {
+            delete_option('mosp_show_qr');
+        });
 
     }
 
@@ -1338,39 +1337,6 @@ class MosingpassPlugin
             // return self::getNricUen($headerbody);
         }
     }
-
-    function qr_code_scripts()
-    {
-        $appname = get_option(self::APP_NAME);
-        $state = base64_encode($appname);
-        $appslist = maybe_unserialize(get_option('mo_oauth_apps_list'));
-        $clientId = $appslist[$appname]['clientid'];
-        wp_enqueue_script('singpass_support_script', 'https://stg-id.singpass.gov.sg/static/ndi_embedded_auth.js');
-        wp_enqueue_script('singpass_script', plugin_dir_url(__FILE__) . 'js/singpass.js');
-        wp_localize_script('singpass_script', 'singpass_vars', array(
-            'state' => $state,
-            // 'redirectUri' => get_option(self::REDIRECT_URI),
-            'redirectUri' => self::getRedirectUri(),
-            'clientId' => $clientId
-        ));
-        //        echo '<script src="https://stg-id.singpass.gov.sg/static/ndi_embedded_auth.js"></script>';
-//        echo '<script src="' . $path . 'js/singpass.js"></script>';
-    }
-
-    public static function show_qr_code()
-    {
-        wp_enqueue_style('wp-pointer');
-        wp_enqueue_script('wp-pointer');
-        wp_enqueue_script('utils');
-        ?>
-
-        <body onload="init()">
-            <div id="ndi-qr"></div>
-        </body>
-        <?php
-    }
-
-
 }
 
 $mosingpassPlugin = new MosingpassPlugin();
